@@ -79,7 +79,7 @@ class Fixup(object):
         return (stdout or "").splitlines()
 
     def changed_files(self):
-        for line in self.git(["status", "--porcelain"]):
+        for line in self.git(["status", "--short"]):
             if line[1:2] != "M":
                 # we only handle modified files
                 continue
