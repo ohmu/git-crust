@@ -89,9 +89,12 @@ class Fixup(object):
         changes = {}
         desc = {}
         for file_path in files:
-            parent, title = self.git(["log", "-n", "1", "--oneline",
-                                      "--decorate=no",
-                                      "--", file_path])[0].split(" ", 1)
+            entries = self.git(["log", "-n", "1", "--oneline",
+                                "--decorate=no", "--", file_path])
+            if not entries:
+                raise Error("no previous commits for file {0}"
+                            .format(file_path))
+            parent, title = entries[0].split(" ", 1)
             children = changes.setdefault(parent, set())
             children.add(file_path)
             desc[parent] = title
