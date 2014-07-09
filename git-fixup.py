@@ -86,7 +86,7 @@ def fixup(files, commit=False, diff=False, squash=False):
     desc = {}
     for file_path in files:
         parent, title = git(["log", "-n", "1", "--oneline",
-                             file_path])[0].split(" ", 1)
+                             "--", file_path])[0].split(" ", 1)
         children = changes.setdefault(parent, set())
         children.add(file_path)
         desc[parent] = title
