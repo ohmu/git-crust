@@ -35,6 +35,7 @@ Notes:
     helps (at least 1.9.1 and newer work ok).
 
 """
+import logging
 import subprocess
 import optparse
 import sys
@@ -44,98 +45,111 @@ class Error(Exception):
     """gix-fixup error"""
 
 
-def parse_args(args):
-    parser = optparse.OptionParser()
-    parser.add_option("-a", "--all", action="store_true",
-                      help="commit all changes")
-    parser.add_option("-d", "--diff", action="store_true",
-                      help="show diff of changes")
-    parser.add_option("-n", "--no-commit", action="store_true",
-                      help="just show the changes, do not commit")
-    parser.add_option("-s", "--squash", action="store_true",
-                      help="use --squash=<commit> instead of --fixup=<commit>")
-    parser.add_option("-r", "--rebase", action="store_true",
-                      help="rebase all fixup commits automatically")
+class Fixup(object):
+    def __init__(self):
+        self.log = logging.getLogger("git-fixup")
 
-    return parser.parse_args()
+    def parse_args(self, args):
+        parser = optparse.OptionParser()
+        parser.add_option("-a", "--all", action="store_true",
+                          help="commit all changes")
+        parser.add_option("-d", "--diff", action="store_true",
+                          help="show diff of changes")
+        parser.add_option("-D", "--debug", action="store_true",
+                          help="enable debug output")
+        parser.add_option("-n", "--no-commit", action="store_true",
+                          help="just show the changes, do not commit")
+        parser.add_option("-s", "--squash", action="store_true",
+                          help="use --squash=<commit> instead of --fixup=<commit>")
+        parser.add_option("-r", "--rebase", action="store_true",
+                          help="rebase all fixup commits automatically")
+        return parser.parse_args()
 
+    def git(self, args, capture=True):
+        args = ["git"] + args
+        self.log.debug("git cmd: %r", args)
+        sub = subprocess.Popen(args,
+                               stdout=subprocess.PIPE if capture else None,
+                               stderr=subprocess.PIPE if capture else None)
+        stdout, stderr = sub.communicate()
+        if sub.returncode:
+            raise Error("command {0!r} failed with exit code {1!r}, "
+                        "stdout={2!r}, stderr={3!r}".format(
+                            args, sub.returncode, stdout, stderr))
+        return (stdout or "").splitlines()
 
-def git(args, capture=True):
-    args = ["git"] + args
-    sub = subprocess.Popen(args,
-                           stdout=subprocess.PIPE if capture else None,
-                           stderr=subprocess.PIPE if capture else None)
-    stdout, stderr = sub.communicate()
-    if sub.returncode:
-        raise Error("command {0!r} failed with exit code {1!r}, "
-                    "stdout={2!r}, stderr={3!r}".format(
-                        args, sub.returncode, stdout, stderr))
-    return (stdout or "").splitlines()
+    def changed_files(self):
+        for line in self.git(["status", "--porcelain"]):
+            if line[1:2] != "M":
+                # we only handle modified files
+                continue
+            yield line[3:]
 
+    def fixup(self, files, commit=False, diff=False, squash=False):
+        changes = {}
+        desc = {}
+        for file_path in files:
+            parent, title = self.git(["log", "-n", "1", "--oneline",
+                                      "--decorate=no",
+                                      "--", file_path])[0].split(" ", 1)
+            children = changes.setdefault(parent, set())
+            children.add(file_path)
+            desc[parent] = title
 
-def changed_files():
-    for line in git(["status", "--porcelain"]):
-        if line[1:2] != "M":
-            # we only handle modified files
-            continue
-        yield line[3:]
+        for commit_id, desc in desc.iteritems():
+            print commit_id, desc
+            for file_path in changes[commit_id]:
+                if diff:
+                    for line in self.git(["--no-pager", "diff", file_path],
+                                         capture=False):
+                        print line
+                else:
+                    print "  ", file_path
+            print
 
+        if commit:
+            for commit_id, files in changes.iteritems():
+                self.git(["commit", "--squash" if squash else "--fixup",
+                          commit_id] + list(files), capture=False)
 
-def fixup(files, commit=False, diff=False, squash=False):
-    changes = {}
-    desc = {}
-    for file_path in files:
-        parent, title = git(["log", "-n", "1", "--oneline",
-                             "--", file_path])[0].split(" ", 1)
-        children = changes.setdefault(parent, set())
-        children.add(file_path)
-        desc[parent] = title
+    def rebase_all(self):
+        commits = [
+            line.split(" ", 1)
+            for line in self.git(
+                    ["--no-pager", "log", "-n", "1000", "--oneline",
+                     "--decorate=no",])
+        ]
+        fixups = set(
+            [e[1].replace("fixup! ", "").replace("squash! ", "")
+             for e in commits
+             if e[1].startswith("fixup!") or e[1].startswith("squash!")]
+        )
+        self.log.debug("found fixup commits: %r", fixups)
+        if not fixups:
+            return
 
-    for commit_id, desc in desc.iteritems():
-        print commit_id, desc
-        for file_path in changes[commit_id]:
-            if diff:
-                for line in git(["--no-pager", "diff", file_path],
-                                capture=False):
-                    print line
+        parents = [e for e in commits if e[1] in fixups]
+        self.log.debug("found parents: %r", parents)
+        if not parents:
+            raise Error("could not find target for fixup/squashes: {0!r}"
+                        .format(fixups))
+        self.git(["rebase", "-i", "--autosquash", parents[-1][0] + "^"],
+                 capture=False)
+
+    def main(self, args):
+        opt, files = self.parse_args(args)
+        logging.basicConfig(level=logging.DEBUG if opt.debug else logging.INFO)
+        try:
+            if opt.rebase:
+                self.rebase_all()
             else:
-                print "  ", file_path
-        print
+                self.fixup(files or self.changed_files(),
+                           commit=(not opt.no_commit and (opt.all or files)),
+                           diff=opt.diff, squash=opt.squash)
+        except Error as error:
+            print "ERROR: {0.__class__.__name__}: {0}".format(error)
+            return 1
 
-    if commit:
-        for commit_id, files in changes.iteritems():
-            git(["commit", "--squash" if squash else "--fixup",
-                 commit_id] + list(files), capture=False)
-
-
-def rebase_all():
-    commits = [
-        line.split(" ", 1)
-        for line in git(["--no-pager", "log", "-n", "1000", "--oneline"])
-    ]
-    fixups = set([e[1].replace("fixup! ", "").replace("squash! ", "")
-                  for e in commits
-                  if e[1].startswith("fixup!") or e[1].startswith("squash!")])
-    if not fixups:
-        return
-    parents = [e for e in commits if e[1] in fixups]
-    if not parents:
-        raise Error("could not find target for fixup/squashes: {0!r}".format(fixups))
-    git(["rebase", "-i", "--autosquash", parents[-1][0] + "^"], capture=False)
-
-
-def main(args):
-    opt, files = parse_args(args)
-    try:
-        if opt.rebase:
-            rebase_all()
-        else:
-            fixup(files or changed_files(),
-                  commit=(not opt.no_commit and (opt.all or files)),
-                  diff=opt.diff, squash=opt.squash)
-    except Error as error:
-        print "ERROR: {0.__class__.__name__}: {0}".format(error)
-        return 1
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(Fixup().main(sys.argv[1:]))
