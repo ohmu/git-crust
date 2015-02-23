@@ -35,6 +35,7 @@ Notes:
     helps (at least 1.9.1 and newer work ok).
 
 """
+from __future__ import print_function
 import logging
 import subprocess
 import optparse
@@ -46,6 +47,7 @@ class Error(Exception):
 
 
 class Fixup(object):
+    """git-fixup tool"""
     def __init__(self):
         self.log = logging.getLogger("git-fixup")
 
@@ -76,7 +78,7 @@ class Fixup(object):
             raise Error("command {0!r} failed with exit code {1!r}, "
                         "stdout={2!r}, stderr={3!r}".format(
                             args, sub.returncode, stdout, stderr))
-        return (stdout or "").splitlines()
+        return (stdout or b"").decode("utf-8").splitlines()
 
     def changed_files(self):
         for line in self.git(["status", "--short"]):
@@ -99,28 +101,27 @@ class Fixup(object):
             children.add(file_path)
             desc[parent] = title
 
-        for commit_id, desc in desc.iteritems():
-            print commit_id, desc
+        for commit_id, desc in desc.items():
+            print(commit_id, desc)
             for file_path in changes[commit_id]:
                 if diff:
                     for line in self.git(["--no-pager", "diff", file_path],
                                          capture=False):
-                        print line
+                        print(line)
                 else:
-                    print "  ", file_path
-            print
+                    print("  ", file_path)
+            print()
 
         if commit:
-            for commit_id, files in changes.iteritems():
+            for commit_id, files in changes.items():
                 self.git(["commit", "--squash" if squash else "--fixup",
                           commit_id] + list(files), capture=False)
 
     def rebase_all(self):
         commits = [
             line.split(" ", 1)
-            for line in self.git(
-                    ["--no-pager", "log", "-n", "1000", "--oneline",
-                     "--decorate=no",])
+            for line in self.git(["--no-pager", "log", "-n", "1000", "--oneline",
+                                  "--decorate=no"])
         ]
         fixups = set(
             [e[1].replace("fixup! ", "").replace("squash! ", "")
@@ -150,7 +151,7 @@ class Fixup(object):
                            commit=(not opt.no_commit and (opt.all or files)),
                            diff=opt.diff, squash=opt.squash)
         except Error as error:
-            print "ERROR: {0.__class__.__name__}: {0}".format(error)
+            print("ERROR: {0.__class__.__name__}: {0}".format(error))
             return 1
 
 
