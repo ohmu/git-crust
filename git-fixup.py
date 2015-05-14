@@ -26,6 +26,7 @@ Usage:
     git fixup -s            # Commit with --squash instead of --fixup
     git fixup -r            # 'git rebase --autosquash -i' all fixup commits
                             # over the nearest possible commit
+    git fixup -e            # Commit the changed as fixups to HEAD
 
 Notes:
 
@@ -65,6 +66,8 @@ class Fixup(object):
                           help="use --squash=<commit> instead of --fixup=<commit>")
         parser.add_option("-r", "--rebase", action="store_true",
                           help="rebase all fixup commits automatically")
+        parser.add_option("-e", "--head", action="store_true",
+                          help="commit all changes as a fixup to HEAD")
         return parser.parse_args()
 
     def git(self, args, capture=True):
@@ -144,12 +147,15 @@ class Fixup(object):
         opt, files = self.parse_args(args)
         logging.basicConfig(level=logging.DEBUG if opt.debug else logging.INFO)
         try:
-            if opt.rebase:
-                self.rebase_all()
+            if opt.head:
+                print(self.git(["commit", "-a", "--fixup=HEAD"])[0])
+            elif opt.rebase:
+                return self.rebase_all()
             else:
-                self.fixup(files or self.changed_files(),
-                           commit=(not opt.no_commit and (opt.all or files)),
-                           diff=opt.diff, squash=opt.squash)
+                return self.fixup(
+                    files or self.changed_files(),
+                    commit=(not opt.no_commit and (opt.all or files)),
+                    diff=opt.diff, squash=opt.squash)
         except Error as error:
             print("ERROR: {0.__class__.__name__}: {0}".format(error))
             return 1
