@@ -149,13 +149,18 @@ class Fixup(object):
         try:
             if opt.head:
                 print(self.git(["commit", "-a", "--fixup=HEAD"])[0])
-            elif opt.rebase:
-                return self.rebase_all()
-            else:
-                return self.fixup(
+            elif (not opt.rebase) or opt.all:
+                ret = self.fixup(
                     files or self.changed_files(),
                     commit=(not opt.no_commit and (opt.all or files)),
                     diff=opt.diff, squash=opt.squash)
+                if ret:
+                    return ret
+
+            if opt.rebase:
+                ret = self.rebase_all()
+
+            return ret
         except Error as error:
             print("ERROR: {0.__class__.__name__}: {0}".format(error))
             return 1
